@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Tube Player</title>
+<style>
+:root{
+  --bg:#f3f4f7; --surface:#ffffff; --fg:#16181d; --muted:#5d6370;
+  --line:#dde0e6; --accent:#d4372c; --accent-fg:#ffffff;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root{ --bg:#0f1115; --surface:#191c22; --fg:#eceef2; --muted:#9aa1ad;
+    --line:#2a2e36; --accent:#ef5a4e; --accent-fg:#ffffff; color-scheme:dark; }
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{
+  background:var(--bg); color:var(--fg);
+  font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  padding-block:20px 40px;
+  padding-left:max(16px, env(safe-area-inset-left,0px));
+  padding-right:max(16px, env(safe-area-inset-right,0px));
+}
+.wrap{max-width:960px;margin:0 auto;display:grid;gap:16px}
+h1{font-size:20px;margin:0;letter-spacing:-.01em}
+form{display:flex;gap:8px;flex-wrap:wrap}
+input{
+  flex:1 1 240px;min-width:0;padding:12px 14px;font:inherit;
+  border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--fg);
+}
+input:focus,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button{
+  padding:12px 18px;font:inherit;font-weight:600;border:0;border-radius:10px;
+  background:var(--accent);color:var(--accent-fg);cursor:pointer;
+}
+.player{
+  position:relative;width:100%;max-width:100%;aspect-ratio:16/9;
+  background:#000;border-radius:12px;overflow:hidden;
+}
+.player iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
+.empty{position:absolute;inset:0;display:grid;place-items:center;color:#9aa1ad;padding:16px;text-align:center}
+.msg{color:var(--muted);font-size:13px;margin:0}
+.msg.err{color:var(--accent)}
+h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:8px 0 0}
+ul{list-style:none;padding:0;margin:0;display:grid;gap:6px}
+li button{
+  width:100%;text-align:left;background:var(--surface);color:var(--fg);
+  border:1px solid var(--line);font-weight:400;padding:10px 12px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.row{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.link{background:none;color:var(--muted);padding:4px 0;font-weight:400;text-decoration:underline}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Tube Player</h1>
+  <form id="f">
+    <input id="u" type="text" inputmode="url" autocomplete="off"
+      placeholder="Paste a YouTube link or video ID" aria-label="YouTube link or video ID">
+    <button type="submit">Play</button>
+  </form>
+  <p id="m" class="msg">Plays through youtube-nocookie.com, YouTube's privacy embed domain.</p>
+  <div class="player" id="p"><div class="empty">Paste a link above to start</div></div>
+
+  <div class="row"><h2>Recent</h2><button class="link" id="clr" type="button">Clear</button></div>
+  <ul id="r"></ul>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const KEY = 'tube-player-recent';
+
+function parse(input){
+  const s = input.trim();
+  if(/^[\w-]{11}$/.test(s)) return {v:s};
+  let url;
+  try{ url = new URL(s.startsWith('http') ? s : 'https://' + s); }catch{ return null; }
+  const h = url.hostname.replace(/^www\.|^m\.|^music\./,'');
+  const list = url.searchParams.get('list');
+  const t = url.searchParams.get('t') || url.searchParams.get('start');
+  let v = null;
+  if(h === 'youtu.be') v = url.pathname.slice(1, 12);
+  else if(h.endsWith('youtube.com') || h.endsWith('youtube-nocookie.com')){
+    v = url.searchParams.get('v');
+    const m = url.pathname.match(/\/(embed|shorts|live|v)\/([\w-]{11})/);
+    if(!v && m) v = m[2];
+  }
+  if(v && !/^[\w-]{11}$/.test(v)) v = null;
+  if(!v && !list) return null;
+  return {v, list, t: t ? parseInt(t, 10) || 0 : 0};
+}
+
+function embedUrl({v, list, t}){
+  const base = 'https://www.youtube-nocookie.com/embed/';
+  const q = new URLSearchParams({autoplay:'1', rel:'0', playsinline:'1'});
+  if(t) q.set('start', t);
+  if(list){ q.set('list', list); if(!v) return base + 'videoseries?' + q; }
+  return base + v + '?' + q;
+}
+
+function play(info, label){
+  const f = document.createElement('iframe');
+  f.src = embedUrl(info);
+  f.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
+  f.allowFullscreen = true;
+  f.referrerPolicy = 'strict-origin-when-cross-origin';
+  f.title = 'YouTube video';
+  $('p').replaceChildren(f);
+  $('m').className = 'msg';
+  $('m').textContent = 'Playing via youtube-nocookie.com.';
+  save(label);
+}
+
+function load(){ try{ return JSON.parse(localStorage.getItem(KEY)) || []; }catch{ return []; } }
+function save(label){
+  const list = [label, ...load().filter(x => x !== label)].slice(0, 15);
+  try{ localStorage.setItem(KEY, JSON.stringify(list)); }catch{}
+  render();
+}
+function render(){
+  const items = load();
+  $('r').replaceChildren(...items.map(s => {
+    const li = document.createElement('li');
+    const b = document.createElement('button');
+    b.type = 'button'; b.textContent = s;
+    b.onclick = () => { $('u').value = s; go(s); };
+    li.append(b); return li;
+  }));
+  $('clr').hidden = !items.length;
+}
+
+function go(s){
+  const info = parse(s);
+  if(!info){
+    $('m').className = 'msg err';
+    $('m').textContent = "That doesn't look like a YouTube link. Try a youtube.com or youtu.be link, or an 11-character video ID.";
+    return;
+  }
+  play(info, s.trim());
+}
+
+$('f').addEventListener('submit', e => { e.preventDefault(); go($('u').value); });
+$('clr').onclick = () => { try{ localStorage.removeItem(KEY); }catch{} render(); };
+
+const start = new URLSearchParams(location.search).get('v');
+if(start){ $('u').value = start; go(start); }
+render();
+</script>
+</body>
+</html>
